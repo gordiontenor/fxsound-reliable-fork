@@ -58,16 +58,22 @@ int PT_DECLSPEC sndDevicesInit(PT_HANDLE *hp_sndDevices, CSlout *hp_slout, int i
 	*ip_status_flag = SND_DEVICES_DEVICE_OPERATION_COMPLETED;
 
 
-	// CoInitialize must be called at least once in every thread that uses COM functions.
-	// Since this module may be used in a separate thread its called here.
-	// Its ok to make this call multiple times if it has already been called in other modules or the main.
-	// Apparently must be called before any variables are assigned.
-	hr = CoInitialize( NULL );
-
 	/* Allocate the handle */
 	cast_handle = (struct sndDevicesHdlType *)hp_sndDevices;
 	if (cast_handle == NULL)
 		return(NOT_OKAY);
+
+	// The caller owns this thread's COM apartment (Main.cpp uses MTA).
+	// CoInitialize(NULL) would request STA on this same thread and return
+	// RPC_E_CHANGED_MODE; never change or unbalance the caller's COM lifetime.
+	ULONG_PTR comContextToken = 0;
+	hr = CoGetContextToken(&comContextToken);
+	if (FAILED(hr))
+	{
+		*ip_status_flag = SND_DEVICES_GENERIC_FAILURE;
+		OutputDebugStringW(L"FxSound Audiopassthru: caller thread has no COM apartment\n");
+		return(NOT_OKAY_NO_BREAK);
+	}
 
 	cast_handle->slout_hdl = hp_slout;
 	cast_handle->i_trace_on = i_trace_on;

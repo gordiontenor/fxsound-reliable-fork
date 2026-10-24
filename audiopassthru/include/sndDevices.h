@@ -46,6 +46,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 /* Limit settings */
 #define SND_DEVICES_MAX_NUM_DEVICES 64
+#define SND_DEVICES_STARTUP_DEVICE_MAX_POLLS 60 /* 60 x 50ms: approx 3 seconds */
 
 /* Device "friendly name" string, used to identify DFX device. */
 #define SND_DEVICES_DFX_DEVICE_STRING L"FxSound Audio Enhancer"

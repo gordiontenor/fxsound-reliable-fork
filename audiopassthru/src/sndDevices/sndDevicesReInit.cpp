@@ -113,17 +113,18 @@ int PT_DECLSPEC sndDevicesReInit(PT_HANDLE *hp_sndDevices, int i_initType, int *
 
 			loopCount++;
 
-			if( loopCount > 20 )	// 20 loops of 50 millisecs is 1 second.
+			// Permit a slow virtual endpoint to appear, but never wait indefinitely.
+			if (resultFlag != SND_DEVICES_DEVICE_OPERATION_COMPLETED &&
+				loopCount >= SND_DEVICES_STARTUP_DEVICE_MAX_POLLS)
 			{
-				if( i_initType == SND_DEVICES_INIT_FOR_PROCESSING )
+				if (i_initType == SND_DEVICES_INIT_FOR_PROCESSING)
 				{
 					*ipDfxDeviceEnabledFlag = IS_FALSE;
-					return(OKAY);
+					*ip_status = SND_DEVICES_DEVICE_NOT_PRESENT;
+					cast_handle->function_status = SND_DEVICES_DEVICE_NOT_PRESENT;
+					return(OKAY); // Recoverable not-ready state, not a successful discovery.
 				}
-				else
-				{
-					break;
-				}
+				break;
 			}
 		}
 		while( resultFlag != SND_DEVICES_DEVICE_OPERATION_COMPLETED );
