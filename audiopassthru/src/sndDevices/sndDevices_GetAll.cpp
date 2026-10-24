@@ -128,8 +128,13 @@ int PT_DECLSPEC sndDevices_GetAll(PT_HANDLE* hp_sndDevices, int* ip_num_devices)
 
 	if (pDefaultDevice != NULL)
 	{
-		pDefaultDevice->GetId(&pwszIDdefault);
-		if (FAILED(hr)) SND_DEVICES_SET_STATUS_AND_RETURN_OK(SND_DEVICES_GETID_FAILED);
+		hr = pDefaultDevice->GetId(&pwszIDdefault);
+		if (FAILED(hr))
+		{
+			CoTaskMemFree(pwszIDdefault);
+			cast_handle->function_status = SND_DEVICES_GETID_FAILED;
+			return(NOT_OKAY_NO_BREAK);
+		}
 	}
 
 	// -------------------------------------------------------------------------

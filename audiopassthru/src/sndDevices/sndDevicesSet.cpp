@@ -112,7 +112,15 @@ int PT_DECLSPEC sndDevicesSetDeviceType(PT_HANDLE *hp_sndDevices, int i_deviceTy
 			hr = pPolicyConfig->SetDefaultEndpoint(cast_handle->pwszID[device_index_num], reserved);
 			pPolicyConfig->Release();
 
-			// Store the current default device number and set the new one.
+			// A rejected Windows switch must not be recorded as a successful switch.
+			if (FAILED(hr))
+			{
+				*ip_resultFlag = SND_DEVICES_PROPERTY_SET_FAILED;
+				cast_handle->function_status = SND_DEVICES_PROPERTY_SET_FAILED;
+				return(NOT_OKAY_NO_BREAK);
+			}
+
+			// Update the cached default only after Windows accepted the request.
 			cast_handle->priorDefaultDeviceNum = cast_handle->defaultDeviceNum;
 			cast_handle->defaultDeviceNum = device_index_num;
 
@@ -120,8 +128,9 @@ int PT_DECLSPEC sndDevicesSetDeviceType(PT_HANDLE *hp_sndDevices, int i_deviceTy
 		}
 		else
 		{
-			*ip_resultFlag = SND_DEVICES_DEVICE_NOT_PRESENT;
-			SND_DEVICES_SET_STATUS_AND_RETURN_OK(SND_DEVICES_INSTANCE_CREATE_FAILED);
+			*ip_resultFlag = SND_DEVICES_INSTANCE_CREATE_FAILED;
+			cast_handle->function_status = SND_DEVICES_INSTANCE_CREATE_FAILED;
+			return(NOT_OKAY_NO_BREAK);
 		}
 		break;
 

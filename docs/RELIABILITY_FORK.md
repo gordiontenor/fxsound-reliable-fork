@@ -40,4 +40,18 @@ A short host test started the isolated unsigned fork, but it never produced a CA
 
 **Stop condition:** Do not repeat the unsigned fork live on the host or replace the installed application until the startup/audio-service hang has been understood in an isolated environment. No driver changes, AV exclusions, or further DSP changes are justified from this evidence.
 
-Next narrow investigation: `FxController::initConfig()` accepts `--power=1`, but `FxController::setPowerState()` forces power off if `dfx_enabled_` is false or Windows reports a remote session. A read-only session check returned `SM_REMOTESESSION=0`, making a failed virtual-device initialization worth investigating first, but not proven. Compare the fork's cold-start `sndDevicesInit` / `initOutputs` path with the upstream baseline and inspect the service-hang report if available. Then perform separately controlled acceptance of audible Focusrite output, reconnect, and stability. Do not ship before that test passes.
+## Isolated startup inspection (no audio device opened)
+
+The cold-start sequence is `Main::initialise → FxController::init → AudioPassthru::init → sndDevicesInit → sndDevicesReInit → sndDevicesImplementDeviceRules → initOutputs → setPowerState`. This sequence is **not passive**: device rules can request that Windows select the FxSound virtual endpoint before final capture/playback setup has finished.
+
+Two concrete error-handling bugs were found and fixed on this development branch:
+
+- `sndDevicesSetDeviceType(SND_DEVICES_DEFAULT)` previously ignored `IPolicyConfigVista::SetDefaultEndpoint`'s HRESULT and updated its internal default index even when Windows rejected the switch. It now returns failure and preserves the previous index on rejected Windows switches and policy-creation errors. `tests/test_startup_endpoint.py` compiles the **production switch case** with a fake policy object, never opens a Windows audio device, and checks success, rejected switch and policy-creation failure (3/3 passing after fix; baseline failed on rejected switch).
+- `sndDevices_GetAll()` called `pDefaultDevice->GetId` without assigning its result to `hr` and then tested an earlier HRESULT. It now captures and checks the correct value. The test includes a source-level regression guard for this assignment.
+
+Two additional observations are intentionally **not** patched without stronger evidence:
+
+- `Main.cpp` calls `CoInitializeEx(..., COINIT_MULTITHREADED)`, while `sndDevicesInit.cpp` subsequently calls `CoInitialize(NULL)` and ignores its return code. An audio-free COM probe confirmed the sequence on an MTA thread returns `RPC_E_CHANGED_MODE (0x80010106)` for the latter call. This does **not** prove the audio-service hang.
+- `sndDevicesReInit` can return `OKAY` with `ipDfxDeviceEnabledFlag=false` after approximately one second without finding the virtual device. `initOutputs` and `setPowerState` can then leave processing disabled. This is a plausible explanation for `--power=1` not taking effect, but no live HRESULT/log has yet established the actual cause on this computer.
+
+**No host audio test or FXVAD/Focusrite driver change was performed for this isolated inspection.** The previous live acceptance remains blocked pending controlled investigation of Windows Audio service hang. Do not interpret passing mock tests or a successful build as audible-output acceptance.
