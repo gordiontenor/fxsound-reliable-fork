@@ -400,31 +400,78 @@ Exit:
  * DESCRIPTION: Allows starting or stopping audio capture. Note that after capture stops, existing buffers
  * that remain queued up for the playback buffer will playout and then playback will stop also.
  */
+// Keep the WASAPI HRESULT visible: a failed capture Start must not be hidden by
+// a successful playback Start. OutputDebugStringW works even with tracing off.
+static int sndDevicesReportStreamFailure(struct sndDevicesHdlType *handle,
+	int status, HRESULT hr, const wchar_t *operation)
+{
+	handle->function_status = status;
+	wchar_t message[256];
+	swprintf(message, 256, L"FxSound Audiopassthru: %s failed (HRESULT=0x%08X, status=%d)\n",
+		operation, static_cast<unsigned int>(hr), status);
+	OutputDebugStringW(message);
+	if (handle->i_trace_on && handle->slout_hdl)
+		handle->slout_hdl->Message_Wide(FIRST_LINE, message);
+	return(NOT_OKAY_NO_BREAK);
+}
+
 int PT_DECLSPEC sndDevicesStartStopCapture(PT_HANDLE *hp_sndDevices, int i_startStopFlag)
 {
-	struct sndDevicesHdlType *cast_handle;
-	HRESULT hr;
-
-	cast_handle = (struct sndDevicesHdlType *)hp_sndDevices;
+	struct sndDevicesHdlType *cast_handle = (struct sndDevicesHdlType *)hp_sndDevices;
 
 	if (cast_handle == NULL)
-		return(NOT_OKAY);
+		return(NOT_OKAY_NO_BREAK);
 
-	if(cast_handle->pAudioClientCapture == NULL) SND_DEVICES_SET_STATUS_AND_RETURN_OK(SND_DEVICES_NULL_CAPTURE_CLIENT)
-	if(cast_handle->pAudioClientPlayback == NULL) SND_DEVICES_SET_STATUS_AND_RETURN_OK(SND_DEVICES_NULL_PLAYBACK_CLIENT)
+	if (cast_handle->pAudioClientCapture == NULL)
+		return sndDevicesReportStreamFailure(cast_handle, SND_DEVICES_NULL_CAPTURE_CLIENT,
+			E_POINTER, L"Capture client");
+	if (cast_handle->pAudioClientPlayback == NULL)
+		return sndDevicesReportStreamFailure(cast_handle, SND_DEVICES_NULL_PLAYBACK_CLIENT,
+			E_POINTER, L"Playback client");
 
-	if( i_startStopFlag == SND_DEVICES_START_CAPTURE )
+	if (i_startStopFlag == SND_DEVICES_START_CAPTURE)
 	{
 		cast_handle->stopAudioCaptureAndPlaybackLoop = 0;
-		hr = cast_handle->pAudioClientCapture->Start(); // Start capturing, this starts filling of the internal capture buffers.
-		hr = cast_handle->pAudioClientPlayback->Start(); // Start playback, this starts filling of the internal playback buffers.
+		const HRESULT captureHr = cast_handle->pAudioClientCapture->Start();
+		if (FAILED(captureHr))
+		{
+			cast_handle->stopAudioCaptureAndPlaybackLoop = 1;
+			return sndDevicesReportStreamFailure(cast_handle, SND_DEVICES_CAPTURE_START_FAILED,
+				captureHr, L"Capture Start");
+		}
+
+		const HRESULT playbackHr = cast_handle->pAudioClientPlayback->Start();
+		if (FAILED(playbackHr))
+		{
+			// Do not leave capture running when the physical playback device fails.
+			const HRESULT rollbackHr = cast_handle->pAudioClientCapture->Stop();
+			if (FAILED(rollbackHr))
+				sndDevicesReportStreamFailure(cast_handle, SND_DEVICES_CAPTURE_STOP_FAILED,
+					rollbackHr, L"Capture rollback Stop");
+			cast_handle->stopAudioCaptureAndPlaybackLoop = 1;
+			return sndDevicesReportStreamFailure(cast_handle, SND_DEVICES_PLAYBACK_START_FAILED,
+				playbackHr, L"Playback Start");
+		}
+	}
+	else if (i_startStopFlag == SND_DEVICES_STOP_CAPTURE)
+	{
+		// Attempt both stops even when the first one fails.
+		const HRESULT captureHr = cast_handle->pAudioClientCapture->Stop();
+		const HRESULT playbackHr = cast_handle->pAudioClientPlayback->Stop();
+		cast_handle->stopAudioCaptureAndPlaybackLoop = 1;
+		if (FAILED(captureHr))
+			return sndDevicesReportStreamFailure(cast_handle, SND_DEVICES_CAPTURE_STOP_FAILED,
+				captureHr, L"Capture Stop");
+		if (FAILED(playbackHr))
+			return sndDevicesReportStreamFailure(cast_handle, SND_DEVICES_PLAYBACK_STOP_FAILED,
+				playbackHr, L"Playback Stop");
 	}
 	else
 	{
-		hr = cast_handle->pAudioClientCapture->Stop();  // Stop capturing.
-		hr = cast_handle->pAudioClientPlayback->Stop(); // Stop playback.
-		cast_handle->stopAudioCaptureAndPlaybackLoop = 1;
+		return sndDevicesReportStreamFailure(cast_handle, SND_DEVICES_GENERIC_FAILURE,
+			E_INVALIDARG, L"Start/Stop flag");
 	}
 
+	cast_handle->function_status = SND_DEVICES_DEVICE_OPERATION_COMPLETED;
 	return(OKAY);
 }

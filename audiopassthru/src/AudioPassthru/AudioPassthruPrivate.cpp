@@ -39,6 +39,9 @@ AudioPassthruPrivate::AudioPassthruPrivate()
 	hp_sndDevices_ = (PT_HANDLE *)&(s_sndDevices_);
 	//hp_sndDevices_ = hp_sndDevices;
 	hProcessingThread_ = NULL;
+	processingThreadStartTick_ = 0;
+	retryAfterTick_ = 0;
+	consecutiveThreadFailures_ = 0;
 	ProcessingThreadID_ = (DWORD)0;
 	i_kill_processing_thread_ = IS_FALSE;
 	swprintf(wcp_playback_device_guid_, PT_MAX_GENERIC_STRLEN, L"");
@@ -384,13 +387,38 @@ int AudioPassthruPrivate::processTimer()
 	else
 	{
 		bReturn = GetExitCodeThread(hProcessingThread_, &d_ExitCode);
+		if (!bReturn)
+			d_ExitCode = NOT_OKAY_NO_BREAK;
 		if (d_ExitCode != STILL_ACTIVE)
 		{
+			// A failed stream must not cause a new COM/device reinit every timer tick.
+			// Retry automatically with bounded backoff; successful operation resets it.
+			if (d_ExitCode != OKAY)
+			{
+				if (consecutiveThreadFailures_ < 5)
+					++consecutiveThreadFailures_;
+				const DWORD retryDelayMs = 1000U << (consecutiveThreadFailures_ - 1);
+				retryAfterTick_ = GetTickCount64() + retryDelayMs;
+			}
+			else
+			{
+				consecutiveThreadFailures_ = 0;
+				retryAfterTick_ = 0;
+			}
 			b_need_to_start_thread = TRUE;
 			CloseHandle(hProcessingThread_);
 			hProcessingThread_ = NULL;
 		}
+		else if (consecutiveThreadFailures_ > 0 &&
+			GetTickCount64() - processingThreadStartTick_ >= 15000)
+		{
+			consecutiveThreadFailures_ = 0;
+			retryAfterTick_ = 0;
+		}
 	}
+
+	if (b_need_to_start_thread && GetTickCount64() < retryAfterTick_)
+		return(OKAY);
 
 	if (b_need_to_start_thread)
 	{
@@ -441,6 +469,18 @@ int AudioPassthruPrivate::processTimer()
 		if ((numRealDevices > 0) && (DfxDeviceEnabledFlag == IS_TRUE))
 		{
 			hProcessingThread_ = CreateThread(NULL, 0, processingThread, (LPVOID)this, 0L, &ProcessingThreadID_);
+			if (hProcessingThread_ != NULL)
+			{
+				processingThreadStartTick_ = GetTickCount64();
+				retryAfterTick_ = 0;
+			}
+			else
+			{
+				if (consecutiveThreadFailures_ < 5)
+					++consecutiveThreadFailures_;
+				retryAfterTick_ = GetTickCount64() + (1000U << (consecutiveThreadFailures_ - 1));
+				OutputDebugStringW(L"FxSound Audiopassthru: processing thread creation failed; retry scheduled\n");
+			}
 		}
 		else
 		{
@@ -494,7 +534,7 @@ DWORD AudioPassthruPrivate::threadWorker(void)
 
 	// Start capture.
 	if (sndDevicesStartStopCapture(hp_sndDevices_, SND_DEVICES_START_CAPTURE) != OKAY)
-		return(NOT_OKAY);
+		return(NOT_OKAY_NO_BREAK);
 
 	/*
 	* Keep looping until a goto statement is reached to kill the thread

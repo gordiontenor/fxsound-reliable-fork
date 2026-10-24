@@ -62,6 +62,9 @@ private:
 
 	/* Processing Thread Info */
 	HANDLE hProcessingThread_;
+	ULONGLONG processingThreadStartTick_;
+	ULONGLONG retryAfterTick_;
+	DWORD consecutiveThreadFailures_;
 	DWORD ProcessingThreadID_;
 	int i_kill_processing_thread_; /* Flag set from the outside telling processing thread to end */
 	wchar_t wcp_playback_device_guid_[PT_MAX_GENERIC_STRLEN];

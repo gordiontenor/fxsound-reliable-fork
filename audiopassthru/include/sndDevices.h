@@ -117,6 +117,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define SND_DEVICES_AUDIO_CLIENT_INIT_FAILED		-54
 #define SND_DEVICES_NO_VALID_PLAYBACK_DEVICE 	-57
 #define SND_DEVICES_ASK_USER_SELECT_PLAYBACK_DEVICE	-58
+#define SND_DEVICES_CAPTURE_START_FAILED			-59
+#define SND_DEVICES_PLAYBACK_START_FAILED			-60
+#define SND_DEVICES_CAPTURE_STOP_FAILED				-61
+#define SND_DEVICES_PLAYBACK_STOP_FAILED			-62
 
 /* Device Status Change Events */
 #define SND_DEVICES_NO_CHANGE						0
