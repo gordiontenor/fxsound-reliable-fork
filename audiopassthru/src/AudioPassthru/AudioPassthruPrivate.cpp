@@ -19,6 +19,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //#include "stdafx.h"
 #include "u_AudioPassthru.h"
 #include "sndDevices.h"
+#include <cmath>
+#include <cstdio>
+#include <memory>
 
 #define DFXG_SND_SERVER_KILL_THREAD_TIMEOUT_MSECS		  3000
 #define DFXG_SND_SERVER_KILL_THREAD_WAIT_PER_LOOP_MSECS   50
@@ -527,6 +530,31 @@ DWORD AudioPassthruPrivate::threadWorker(void)
 	int resultFlag;
 	DWORD setReturn;
 
+	// Diagnostic mode is opt-in. Keep normal playback free of disk I/O.
+	char diagnosticFlag[4] = {};
+	const bool diagnosticEnabled =
+		GetEnvironmentVariableA("FXSOUND_AUDIO_DIAG", diagnosticFlag, sizeof(diagnosticFlag)) == 1 &&
+		diagnosticFlag[0] == '1';
+	FILE *rawLog = nullptr;
+	if (diagnosticEnabled)
+	{
+		wchar_t logPath[MAX_PATH] = {};
+		const DWORD pathLength = GetTempPathW(MAX_PATH, logPath);
+		if (pathLength > 0 && pathLength < MAX_PATH &&
+			wcscat_s(logPath, L"fxsound-fork-audio-diagnostic.log") == 0)
+			_wfopen_s(&rawLog, logPath, L"a");
+	}
+	std::unique_ptr<FILE, decltype(&fclose)> diagnosticLog(rawLog, &fclose);
+	ULONGLONG diagnosticTick = GetTickCount64();
+	unsigned long long capturedFrames = 0, dspFrames = 0, playbackFrames = 0;
+	float capturedPeak = 0.0f, dspPeak = 0.0f;
+	int lastDspStatus = 0;
+	if (diagnosticLog)
+	{
+		fprintf(diagnosticLog.get(), "START processing thread\n");
+		fflush(diagnosticLog.get());
+	}
+
 	// Raise the priority of this tread to improve performance. GetCurrentThread() is a call that
 	// returns the current thread ID from within the thread itself.
 	// A return of 0 means set failed. Not sure what option to use, MS doc is confusing, THREAD_PRIORITY_HIGHEST is another option.
@@ -534,7 +562,14 @@ DWORD AudioPassthruPrivate::threadWorker(void)
 
 	// Start capture.
 	if (sndDevicesStartStopCapture(hp_sndDevices_, SND_DEVICES_START_CAPTURE) != OKAY)
+	{
+		if (diagnosticLog)
+		{
+			fprintf(diagnosticLog.get(), "START_FAILED status=%d\n", s_sndDevices_.function_status);
+			fflush(diagnosticLog.get());
+		}
 		return(NOT_OKAY_NO_BREAK);
+	}
 
 	/*
 	* Keep looping until a goto statement is reached to kill the thread
@@ -563,6 +598,16 @@ DWORD AudioPassthruPrivate::threadWorker(void)
 
 		if (numSampleSets > 0)
 		{
+			if (diagnosticLog)
+			{
+				capturedFrames += numSampleSets;
+				// A bounded sample is sufficient to distinguish silence from active audio.
+				const int count = (numSampleSets * pwfx->nChannels < 64)
+					? numSampleSets * pwfx->nChannels : 64;
+				for (int i = 0; i < count; ++i)
+					if (std::isfinite(fp_buffer[i]))
+						capturedPeak = (std::max)(capturedPeak, std::fabs(fp_buffer[i]));
+			}
 			/* Set additional processing settings */
 			i_valid_bits = pwfx->wBitsPerSample;
 			i_check_for_duplicate_buffers = IS_FALSE;
@@ -588,7 +633,17 @@ DWORD AudioPassthruPrivate::threadWorker(void)
 				// Apply DFX processing here using data and format vars above. Format will always be 32 bit floating point.
 			//	if (dfxpUniversalModifySamples(cast_handle->dfxp_hdl, (short int *)fp_buffer, (short int *)fp_buffer, numSampleSets, i_check_for_duplicate_buffers) != OKAY)
 				//	return(NOT_OKAY);
-				p_dfx_dsp_->processAudio((short int *)fp_buffer, (short int *)fp_buffer, numSampleSets, i_check_for_duplicate_buffers);
+				lastDspStatus = p_dfx_dsp_->processAudio((short int *)fp_buffer, (short int *)fp_buffer,
+					numSampleSets, i_check_for_duplicate_buffers);
+				if (diagnosticLog)
+				{
+					dspFrames += numSampleSets;
+					const int count = (numSampleSets * pwfx->nChannels < 64)
+						? numSampleSets * pwfx->nChannels : 64;
+					for (int i = 0; i < count; ++i)
+						if (std::isfinite(fp_buffer[i]))
+							dspPeak = (std::max)(dspPeak, std::fabs(fp_buffer[i]));
+				}
 			}
 
 			/* Check if thread has been signaled to end */
@@ -609,12 +664,24 @@ DWORD AudioPassthruPrivate::threadWorker(void)
 		{
 			if (sndDevicesDoPlayback(hp_sndDevices_, &resultFlag) != OKAY)
 				return(NOT_OKAY);
+			if (diagnosticLog && resultFlag == SND_DEVICES_CAPTURE_PLAYBACK_SUCCESS)
+				playbackFrames += s_sndDevices_.playbackFrameCount; // queued, not proof of audible output
 		}
 		
 
 		/* Make sure the playback succeeded */
 		if (resultFlag != SND_DEVICES_CAPTURE_PLAYBACK_SUCCESS)
 			goto KillProcessingThread;
+		if (diagnosticLog && GetTickCount64() - diagnosticTick >= 1000)
+		{
+			fprintf(diagnosticLog.get(),
+				"CAP frames=%llu peak=%.6f | DSP frames=%llu peak=%.6f status=%d | PLAY queued=%llu mute=%d\n",
+				capturedFrames, capturedPeak, dspFrames, dspPeak, lastDspStatus, playbackFrames, (int)mute_);
+			fflush(diagnosticLog.get());
+			capturedFrames = dspFrames = playbackFrames = 0;
+			capturedPeak = dspPeak = 0.0f;
+			diagnosticTick = GetTickCount64();
+		}
 	}
 
 KillProcessingThread:
