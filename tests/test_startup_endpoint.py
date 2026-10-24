@@ -101,7 +101,7 @@ with tempfile.TemporaryDirectory(prefix="fxsound-endpoint-test-") as folder:
         "@echo off\n"
         f'call "{vcvars}" >nul\n'
         "if errorlevel 1 exit /b 1\n"
-        f'cl /nologo /EHsc /std:c++17 /W4 /utf-8 /Fe:"{exe}" "{cpp}" >"{log}" 2>&1\n'
+        f'cl /nologo /MT /EHsc /std:c++17 /W4 /utf-8 /Fe:"{exe}" "{cpp}" >"{log}" 2>&1\n'
         "if errorlevel 1 exit /b 1\n"
         f'"{exe}"\n',
         encoding="ascii",
@@ -113,4 +113,10 @@ with tempfile.TemporaryDirectory(prefix="fxsound-endpoint-test-") as folder:
         print(result.stderr.strip())
         if log.exists():
             print(log.read_text(errors="replace")[-2200:].encode("ascii", "backslashreplace").decode("ascii"))
+    if result.returncode == 0:
+        import os, shutil
+        target = os.environ.get("FXSOUND_EXPORT_TESTS")
+        if target:
+            Path(target).mkdir(parents=True, exist_ok=True)
+            shutil.copy2(exe, Path(target) / "endpoint-test.exe")
     raise SystemExit(result.returncode)
