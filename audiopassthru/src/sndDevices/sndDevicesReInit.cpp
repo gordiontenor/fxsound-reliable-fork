@@ -47,6 +47,7 @@ int PT_DECLSPEC sndDevicesReInit(PT_HANDLE *hp_sndDevices, int i_initType, int *
 	wchar_t regVal[PT_MAX_GENERIC_STRLEN];
 	HRESULT hr;
 	int resultFlag;
+	int defaultSelectionAutoMode = SND_DEVICES_AUTO_SELECT_DEFAULT_DEVICE_OFF;
 	int loopCount;
 	int captureAllocSize, playbackAllocSize;
 	int captureBufferChannelsForAllocation;
@@ -323,6 +324,28 @@ int PT_DECLSPEC sndDevicesReInit(PT_HANDLE *hp_sndDevices, int i_initType, int *
 				*ipDfxDeviceEnabledFlag = IS_FALSE;
 				*ip_status = resultFlag;
 				SND_DEVICES_SET_STATUS_AND_RETURN_OK(SND_DEVICES_SET_MUTE_FAILED);
+			}
+
+			// Do not route Windows audio to FxSound until both clients are ready.
+			// If initialization above failed, the previous default output is untouched.
+			if (sndDevicesGetDefaultDeviceSelectionMode(hp_sndDevices, &defaultSelectionAutoMode) != OKAY)
+			{
+				*ipDfxDeviceEnabledFlag = IS_FALSE;
+				*ip_status = SND_DEVICES_GENERIC_FAILURE;
+				return(NOT_OKAY_NO_BREAK);
+			}
+			if (defaultSelectionAutoMode == SND_DEVICES_AUTO_SELECT_DEFAULT_DEVICE_ON)
+			{
+				resultFlag = SND_DEVICES_DEVICE_OPERATION_COMPLETED;
+				if (sndDevicesSetDeviceType(hp_sndDevices, SND_DEVICES_DEFAULT,
+					cast_handle->pwszID[cast_handle->captureDeviceNum], &resultFlag) != OKAY ||
+					resultFlag != SND_DEVICES_DEVICE_OPERATION_COMPLETED)
+				{
+					*ipDfxDeviceEnabledFlag = IS_FALSE;
+					*ip_status = resultFlag != SND_DEVICES_DEVICE_OPERATION_COMPLETED
+						? resultFlag : SND_DEVICES_PROPERTY_SET_FAILED;
+					return(NOT_OKAY_NO_BREAK);
+				}
 			}
 
 			cast_handle->ignoreDeviceCallbacks = FALSE;

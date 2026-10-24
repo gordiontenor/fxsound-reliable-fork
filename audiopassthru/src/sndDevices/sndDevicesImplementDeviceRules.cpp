@@ -78,7 +78,6 @@ int PT_DECLSPEC sndDevicesImplementDeviceRules(PT_HANDLE *hp_sndDevices, int *ip
 	int priorDefaultNum = SND_DEVICES_DEVICE_NOT_PRESENT;			// Prior to coming into this function, the device that was default before the mostRecentDefaultNum one.
 	int originalDefaultNum = SND_DEVICES_DEVICE_NOT_PRESENT;		// The device that was default on the first startup of DFX after installation.
 	int mostRecentPlaybackNum = SND_DEVICES_DEVICE_NOT_PRESENT;	// The device that was used for playback prior do coming into this function.
-	int defaultSelectionAutoMode = SND_DEVICES_AUTO_SELECT_DEFAULT_DEVICE_ON; // In current implementation this is always on.
     
 	cast_handle = (struct sndDevicesHdlType *)hp_sndDevices;
 
@@ -102,10 +101,6 @@ int PT_DECLSPEC sndDevicesImplementDeviceRules(PT_HANDLE *hp_sndDevices, int *ip
 
 	current_defaultNum = cast_handle->defaultDeviceNum; // The device the system is currently using as the Default device.
 	dfxNum = cast_handle->dfxDeviceNum;
-
-	// Get the default device selection mode (in currently implementation always on).
-	if( sndDevicesGetDefaultDeviceSelectionMode(hp_sndDevices, &defaultSelectionAutoMode) != OKAY )
-		return(NOT_OKAY);
 
 	//Check to see if the user has selected the playback device (in currently implementation never set).
 	if( sndDeviceReadFromRegistry(hp_sndDevices, REG_CURRENT_USER, SND_DEVICES_REGISTRY_USER_SELECTED_PLAYBACK_WIDE, userSelectedPlaybackID) != OKAY )
@@ -437,19 +432,8 @@ PlaybackDeviceIsSelected:  // Label to jump to when the playback device num has 
 
 	cast_handle->wfxDfxProcessing.nSamplesPerSec = captureSamplingFrequency; // Correct DFX processing sampling freq.
 
-	// Unless the user has turned off automatic default device selection, set the Windows default device to the current DFX capture device.
-	if( defaultSelectionAutoMode == SND_DEVICES_AUTO_SELECT_DEFAULT_DEVICE_ON )
-	{
-		//cast_handle->ignoreDeviceCallbacks = TRUE;
-
-		if( sndDevicesSetDeviceType(hp_sndDevices, SND_DEVICES_DEFAULT, cast_handle->pwszID[cast_handle->captureDeviceNum], &resultFlag) != OKAY)
-			return(NOT_OKAY);
-
-		// Sleep for 1 second so the device callbacks caused by the change above don't force us to do addition undesired re-inits.
-		//Sleep(SND_DEVICES_DEFAULT_CHANGE_WAIT_TIME);
-
-		//cast_handle->ignoreDeviceCallbacks = FALSE;
-	}
+	// Do not switch the Windows default output here. ReInit commits that change
+	// only after both audio clients and their buffers have initialized.
 
 	// Setup selected capture device.
 	cast_handle->pCaptureDevice = cast_handle->pAllDevices[cast_handle->captureDeviceNum];
